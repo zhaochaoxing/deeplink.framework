@@ -1,4 +1,7 @@
 // Copyright (c) 2023, DeepLink.
+#include <bits/stdint-intn.h>
+#include <c10/core/TensorImpl.h>
+#include <pybind11/pybind11.h>
 #include <sstream>
 
 #include <ATen/autocast_mode.h>
@@ -12,7 +15,7 @@
 #include <csrc_dipu/base/DIPUGlobals.h>
 #include <csrc_dipu/runtime/rthelper.h>
 #include <csrc_dipu/utils/helpfunc.hpp>
-
+#include <diopi/diopirt.h>
 #include "DIPUpybind.h"
 #include "exportapi.h"
 using dipu::DIPUEvent;
@@ -280,6 +283,35 @@ static void patchTensor(py::module& m) {
         [](at::Tensor self) -> bool { return dipu::isDeviceTensor(self); });
 }
 
+static void exportMemoryFormat(py::module& m) {
+  py::enum_<diopiMemoryFormat_t>(m, "DIOPIMemoryFormat")
+    .value("Undefined", diopiMemoryFormat_t::Undefined)
+    .value("Contiguous", diopiMemoryFormat_t::Contiguous)
+    .value("ChannelsLast", diopiMemoryFormat_t::ChannelsLast)
+    .value("ChannelsLast3d", diopiMemoryFormat_t::ChannelsLast3d)
+    .value("Preserve", diopiMemoryFormat_t::Preserve)
+    .value("ChannelsLast1d", diopiMemoryFormat_t::ChannelsLast1d)
+    .value("NCHW", diopiMemoryFormat_t::NCHW)
+    .value("NC1HWC0", diopiMemoryFormat_t::NC1HWC0)
+    .value("FRACTAL_Z", diopiMemoryFormat_t::FRACTAL_Z)
+    .value("NC1HWC0_C04", diopiMemoryFormat_t::NC1HWC0_C04)
+    .value("HWCN", diopiMemoryFormat_t::HWCN)
+    .value("NDHWC", diopiMemoryFormat_t::NDHWC)
+    .value("FRACTAL_NZ", diopiMemoryFormat_t::FRACTAL_NZ)
+    .value("NCDHW", diopiMemoryFormat_t::NCDHW)
+    .value("NDC1HWC0", diopiMemoryFormat_t::NDC1HWC0)
+    .value("FRACTAL_Z_3D", diopiMemoryFormat_t::FRACTAL_Z_3D)
+    .export_values();
+
+  m.def("diopi_format", [](at::Tensor self) -> diopiMemoryFormat_t { 
+    return dipu::get_format(self); 
+  });
+
+  m.def("format_cast", [](at::Tensor tensor, diopiMemoryFormat_t format) -> at::Tensor { 
+    return dipu::format_cast(tensor, format); 
+  });
+}
+
 static void exportGenerator(py::module& m) {
   m.def("_manual_seed",
         [](at::DeviceIndex idx, uint64_t seed) { manual_seed(idx, seed); });
@@ -329,6 +361,7 @@ DIPU_API void exportDIPURuntime(PyObject* module) {
   exportMemCaching(m);
   patchStorage(m);
   patchTensor(m);
+  exportMemoryFormat(m);
   exportGenerator(m);
   exportAutocast(m);
 }

@@ -4,12 +4,19 @@ import os
 import traceback
 import threading
 from multiprocessing.util import register_after_fork as _register_after_fork
+import torch
+from torch_dipu import _C
 
 _initialized = True
 _queued_calls = []  # don't invoke these until initialization occurs
 _in_bad_fork = False  # this global is also used in torch.manual_seed
 _original_pid = False
 
+
+def format_cast(tensor:torch.Tensor, format:_C.DIOPIMemoryFormat) -> torch.Tensor:
+    return _C.format_cast(tensor, format)
+
+# def get_diopi_format(tensor:torch.Tensor) ->
 
 def is_initialized():
     r"""Returns whether PyTorch's dipu state has been initialized."""

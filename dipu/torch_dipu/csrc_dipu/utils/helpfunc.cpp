@@ -1,5 +1,12 @@
 // Copyright (c) 2023, DeepLink.
 #include "./helpfunc.hpp"
+#include "csrc_dipu/runtime/core/DIPUStorageImpl.h"
+#include <bits/stdint-intn.h>
+#include <c10/core/TensorImpl.h>
+#include <diopi/functions.h>
+#include <string>
+#include "csrc_dipu/diopirt/diopirt_impl.h"
+#include <Python.h>
 
 #ifndef WIN32
 #include <mutex>
@@ -10,6 +17,27 @@ namespace dipu {
 bool isDeviceTensor(const at::Tensor& tensor) {
   // same as tensor.device().type()
   return tensor.unsafeGetTensorImpl()->device_type() == dipu::DIPU_DEVICE_TYPE;
+}
+
+diopiMemoryFormat_t get_format(const at::Tensor& tensor) {
+  TORCH_CHECK(isDeviceTensor(tensor), "only device tensor support this api.");
+  ::diopiStorageDesc_t desc;
+  dipu::DIPUStorageImpl::GetImplPtr(
+      reinterpret_cast<const at::Tensor&>(tensor))->get_desc(&desc);
+  return desc.format;
+}
+
+at::Tensor format_cast(at::Tensor tensor, diopiMemoryFormat_t target_format) {
+  TORCH_CHECK(isDeviceTensor(tensor), "only device tensor support this api.");
+  ::diopiTensorHandle_t input = dipu::diopi_helper::toDiopiTensorHandle(tensor);
+  ::diopiContext context(dipu::getCurrentDIPUStream().rawstream());
+  ::diopiTensorHandle_t out = nullptr;
+  if (PyGILState_Check() != 0) {
+    Py_BEGIN_ALLOW_THREADS
+  ::diopiFormatCast(&context, &out, input, target_format);
+  Py_END_ALLOW_THREADS
+  }
+  return *(reinterpret_cast<at::Tensor*>(out));
 }
 
 static bool in_bad_fork = false;

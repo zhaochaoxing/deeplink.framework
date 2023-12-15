@@ -1,6 +1,7 @@
 // Copyright (c) 2023, DeepLink.
 #pragma once
 #include <csrc_dipu/base/basedef.h>
+#include <diopi/diopirt.h>
 
 using dipu::devapis::VendorDeviceType;
 
@@ -25,6 +26,10 @@ constexpr const char* VendorTypeToStr(VendorDeviceType t) noexcept {
 }
 
 DIPU_API bool isDeviceTensor(const at::Tensor& tensor);
+
+diopiMemoryFormat_t get_format(const at::Tensor& tensor);
+
+at::Tensor format_cast(at::Tensor tensor, diopiMemoryFormat_t target_format);
 
 DIPU_API bool is_in_bad_fork();
 void poison_fork();

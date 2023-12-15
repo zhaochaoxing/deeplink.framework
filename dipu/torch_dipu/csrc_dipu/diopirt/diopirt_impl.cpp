@@ -1,13 +1,18 @@
 // Copyright (c) 2023, DeepLink.
 #include "./diopirt_impl.h"
 
+#include <ATen/core/TensorBody.h>
+#include <c10/util/Optional.h>
+#include <diopi/diopirt.h>
 #include <mutex>
 #include <stdio.h>
 
 #include "csrc_dipu/profiler/profiler.h"
+#include "csrc_dipu/runtime/core/DIPUStorageImpl.h"
 
 namespace diopihelper = dipu::diopi_helper;
 using dipu::profile::RecordBlockCreator;
+
 
 extern "C" {
 
@@ -87,11 +92,40 @@ DIOPI_RT_API diopiError_t diopiGetTensorElemSize(diopiConstTensorHandle_t pth,
   return diopiSuccess;
 }
 
+DIOPI_RT_API diopiError_t diopiTensorHasStorageDesc(diopiConstTensorHandle_t pth,
+                                                    bool* result) {
+  *result = dipu::DIPUStorageImpl::TensorHasStorageDesc(
+      reinterpret_cast<const at::Tensor*>(pth));
+  return diopiSuccess;
+}
+
 DIOPI_RT_API diopiError_t diopiGetTensorStoragePtr(diopiConstTensorHandle_t pth,
                                                    void** pStoragePtr) {
   // Support both pt2.0 and pt2.1
   *pStoragePtr = const_cast<void*>(
       (reinterpret_cast<const at::Tensor*>(pth))->storage().data());
+  return diopiSuccess;
+}
+
+DIOPI_RT_API diopiError_t diopiGetTensorStorageDesc(diopiConstTensorHandle_t pth,
+                                                    diopiStorageDesc_t* desc) {
+  dipu::DIPUStorageImpl::GetImplPtr(
+      reinterpret_cast<const at::Tensor*>(pth))->get_desc(desc);
+  return diopiSuccess;
+}
+
+DIOPI_RT_API diopiError_t diopiSetTensorStorageDesc(diopiTensorHandle_t pth,
+                                                    const diopiStorageDesc_t& desc) {
+  dipu::DIPUStorageImpl::GetImplPtr(
+      reinterpret_cast<const at::Tensor*>(pth))->set_desc(desc);
+  return diopiSuccess;
+}
+
+DIOPI_RT_API diopiError_t diopiCopyTensorMetaData(diopiTensorHandle_t dst_pth,
+                                                  diopiConstTensorHandle_t src_pth) {
+  const auto* src = reinterpret_cast<const at::Tensor*>(src_pth);
+  auto* dst = reinterpret_cast<at::Tensor*>(dst_pth);
+  dst->set_(dst->storage(), src->storage_offset(), src->sizes(), src->strides());
   return diopiSuccess;
 }
 
@@ -139,6 +173,36 @@ DIOPI_RT_API diopiError_t diopiRequireTensor(diopiContextHandle_t ctx,
     t = at::empty(at_dims, options);
   }
 
+  ctx->arrays.emplace_back(std::move(t));
+  *tensor = reinterpret_cast<diopiTensorHandle_t>(&(ctx->arrays.back()));
+  return diopiSuccess;
+}
+
+DIOPI_RT_API diopiError_t diopiRequireTensorWithNumel(diopiContextHandle_t ctx,
+                                                      diopiTensorHandle_t* tensor,
+                                                      const diopiSize_t* size,
+                                                      const diopiDtype_t dtype,
+                                                      const diopiDevice_t device,
+                                                      const int64_t storage_numel) {
+  dipu::profile::RecordBlockCreator dipu_recorder(__FUNCTION__);
+  at::IntArrayRef at_dims(size->data, size->len);
+  caffe2::TypeMeta at_type = diopihelper::toATenType(dtype);
+  c10::DeviceType at_device = diopihelper::toATenDevice(device);
+  TORCH_INTERNAL_ASSERT_DEBUG_ONLY(at_device == dipu::DIPU_DEVICE_TYPE);
+  at::detail::check_size_nonnegative(at_dims);
+  c10::Allocator *allocator = dipu::getAllocator(dipu::DIPU_DEVICE_TYPE);
+  auto size_bytes = storage_numel * at_type.itemsize();
+  c10::intrusive_ptr<c10::StorageImpl> storage_impl = c10::make_intrusive<dipu::DIPUStorageImpl>(
+      c10::StorageImpl::use_byte_size_t(),
+      size_bytes,
+      allocator,
+      true);
+  constexpr c10::DispatchKeySet dipu_ks({dipu::DIPU_DISPATCH_KEY});
+  at::Tensor t =
+      at::detail::make_tensor<c10::TensorImpl>(std::move(storage_impl), dipu_ks, at_type);
+  if (at_dims.size() != 1 || at_dims[0] != 0) {
+    t.unsafeGetTensorImpl()->generic_set_sizes_contiguous(at_dims);
+  }
   ctx->arrays.emplace_back(std::move(t));
   *tensor = reinterpret_cast<diopiTensorHandle_t>(&(ctx->arrays.back()));
   return diopiSuccess;
